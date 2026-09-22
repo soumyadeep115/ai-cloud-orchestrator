@@ -28,9 +28,7 @@ usual port). If your backend runs elsewhere, copy `.env.example` to
 
 ## What it deliberately doesn't do yet
 
-No decision log, no threshold-vs-ML comparison, no cost panel — your
-backend doesn't have `decisions` or `predictions` endpoints wired up
-yet (Phase 3). This frontend only covers what Phase 1 actually has:
+No decision log, no threshold-vs-ML comparison, no cost panel. This frontend only covers what Phase 1 actually has:
 live cluster + metrics monitoring. Extend it once those endpoints exist
 rather than building UI for data that doesn't exist server-side yet.
 
