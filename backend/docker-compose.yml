@@ -1,0 +1,29 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: orchestrator-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: orchestrator
+      POSTGRES_USER: orchestrator
+      POSTGRES_PASSWORD: orchestrator_dev_password
+    ports:
+      - "5434:5432"
+    volumes:
+      # Postgres's official image runs every .sql file in this folder,
+      # in alphabetical order, ONLY on first container startup (i.e.
+      # when the data volume below is empty). schema.sql runs before
+      # seed.sql because "s" < "se" alphabetically.
+      - ./db:/docker-entrypoint-initdb.d
+      # Named volume so your data survives `docker compose down` / restarts.
+      # Delete this volume (see README) if you ever change schema.sql
+      # and need it to re-run from scratch.
+      - orchestrator_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orchestrator -d orchestrator"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  orchestrator_pgdata:
