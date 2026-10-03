@@ -92,6 +92,27 @@ def main():
     X_live_test, y_live_test = live_test[live_cols], live_test["target"]
 
     X_tr, X_val, y_tr, y_val = chronological_val_split(X_live_train_full, y_live_train_full)
+    
+        # --- Spike-only sample weighting -----------------------------------
+    # Deliberately NOT the same top-25% "transition" threshold used in
+    # evaluate_segments.py — that bucket lumps periodic ramp in with
+    # genuine spikes, and live validation showed those two behave
+    # differently (model beats naive on spikes, loses to naive on
+    # periodic ramp). Using a stricter top-10% threshold here isolates
+    # the biggest, most sudden jumps — spike-like — without also
+    # upweighting moderate-ramp rows we haven't diagnosed yet.
+    SPIKE_WEIGHT = 5.0
+    SPIKE_QUANTILE = 0.90
+
+    jump_full = (live_train["request_rate"] - live_train["request_rate_lag1"]).abs()
+    spike_threshold = jump_full.quantile(SPIKE_QUANTILE)
+    weights_full = np.where(jump_full >= spike_threshold, SPIKE_WEIGHT, 1.0)
+
+    split_idx = len(X_tr)
+    w_tr = weights_full[:split_idx]
+
+    print(f"Spike weighting: threshold={spike_threshold:.3f} (top {(1-SPIKE_QUANTILE)*100:.0f}% jump size), "
+          f"{int((weights_full >= SPIKE_WEIGHT).sum())} of {len(weights_full)} training rows upweighted to {SPIKE_WEIGHT}x")
 
     model_scratch = xgb.XGBRegressor(
         n_estimators=500,          # high ceiling — early stopping decides the real number
@@ -105,7 +126,7 @@ def main():
         random_state=42,
         eval_metric="mae",
     )
-    model_scratch.fit(X_tr, y_tr, eval_set=[(X_val, y_val)], verbose=False)
+    model_scratch.fit(X_tr, y_tr, sample_weight=w_tr, eval_set=[(X_val, y_val)], verbose=False)
     print(f"Model A stopped at {model_scratch.best_iteration} trees (of 500 max)")
 
     print("\n=== Model A: live-only (regularized + early stopping) ===")

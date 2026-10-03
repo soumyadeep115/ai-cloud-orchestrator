@@ -22,20 +22,19 @@ POLL_INTERVAL_SECONDS = int(
 )
 
 
-CLUSTERS = {
-    "cluster-a": os.getenv(
-        "PROMETHEUS_CLUSTER_A",
-        "http://localhost:9090",
-    ),
-    "cluster-b": os.getenv(
-        "PROMETHEUS_CLUSTER_B",
-        "http://localhost:9091",
-    ),
-    "cluster-c": os.getenv(
-        "PROMETHEUS_CLUSTER_C",
-        "http://localhost:9092",
-    ),
+# Only cluster-b is used for ML data collection right now. Polling
+# cluster-a/c when their port-forwards aren't up just adds wasted
+# round-trips to every cycle, on top of already stretching the
+# effective interval well past POLL_INTERVAL_SECONDS.
+POLL_CLUSTERS = os.getenv("POLL_CLUSTERS", "cluster-b").split(",")
+
+_ALL_CLUSTERS = {
+    "cluster-a": os.getenv("PROMETHEUS_CLUSTER_A", "http://localhost:9090"),
+    "cluster-b": os.getenv("PROMETHEUS_CLUSTER_B", "http://localhost:9091"),
+    "cluster-c": os.getenv("PROMETHEUS_CLUSTER_C", "http://localhost:9092"),
 }
+
+CLUSTERS = {name: url for name, url in _ALL_CLUSTERS.items() if name in POLL_CLUSTERS}
 
 
 async def query_prometheus(
@@ -319,6 +318,8 @@ async def run_poller():
     )
 
     while True:
+        cycle_start = asyncio.get_event_loop().time()
+
         try:
             await poll_once()
 
@@ -327,9 +328,18 @@ async def run_poller():
                 "Unexpected poller error"
             )
 
-        await asyncio.sleep(
-            POLL_INTERVAL_SECONDS
-        )
+        elapsed = asyncio.get_event_loop().time() - cycle_start
+        sleep_time = max(0.0, POLL_INTERVAL_SECONDS - elapsed)
+
+        if elapsed > POLL_INTERVAL_SECONDS:
+            logger.warning(
+                "Poll cycle took %.1fs, longer than the %ss interval — "
+                "sampling is running behind.",
+                elapsed,
+                POLL_INTERVAL_SECONDS,
+            )
+
+        await asyncio.sleep(sleep_time)
 
 
 if __name__ == "__main__":
