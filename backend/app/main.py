@@ -3,8 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .routers.clusters import router as clusters_router
 from .routers.predictions import router as predictions_router
+from .routers.decisions import router as decisions_router
 
-from .routers.clusters import router as clusters_router
 
 app = FastAPI(
     title="AI Cloud Orchestrator API",
@@ -22,10 +22,10 @@ app.add_middleware(
 )
 # ↑↑↑ END OF ADDITION
 
-app.include_router(clusters_router)
 
 app.include_router(clusters_router)
 app.include_router(predictions_router)
+app.include_router(decisions_router)
 
 @app.get("/health")
 def health():
