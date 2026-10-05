@@ -1,25 +1,76 @@
 @import "tailwindcss";
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap');
 
 @theme {
-  --color-void: #0A0E12;
-  --color-panel: #10161D;
-  --color-hairline: #1E2A35;
-  --color-text-primary: #E7EDF3;
-  --color-text-muted: #7C8B9B;
+  --color-void: #080C10;
+  --color-panel: #0F151C;
+  --color-panel-light: #141C25;
+  --color-hairline: #22303D;
+
+  --color-text-primary: #F1F5F9;
+  --color-text-muted: #8291A1;
+
   --color-good: #4ADE80;
   --color-bad: #FB7185;
   --color-accent: #5FD4D0;
+  --color-warning: #FFB454;
 
   --font-display: 'Space Grotesk', sans-serif;
   --font-mono: 'IBM Plex Mono', monospace;
   --font-body: 'Inter', sans-serif;
 }
 
-html, body, #root { height: 100%; }
-body {
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+html {
   background: var(--color-void);
+}
+
+body {
+  background:
+    radial-gradient(
+      circle at 50% -20%,
+      rgba(95, 212, 208, 0.08),
+      transparent 45%
+    ),
+    var(--color-void);
+
   color: var(--color-text-primary);
   font-family: var(--font-body);
   margin: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Make buttons feel interactive */
+button {
+  font-family: inherit;
+}
+
+/* Cleaner text selection */
+::selection {
+  background: rgba(95, 212, 208, 0.25);
+  color: var(--color-text-primary);
+}
+
+/* Subtle scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-void);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-hairline);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
 }
