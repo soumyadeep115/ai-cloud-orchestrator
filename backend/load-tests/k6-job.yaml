@@ -1,0 +1,42 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-load
+  namespace: default
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: k6-load
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: k6
+          image: grafana/k6:latest
+          imagePullPolicy: IfNotPresent
+          command: ["k6", "run", "-o", "experimental-prometheus-rw", "/scripts/traffic.js"]
+          env:
+            - name: PROFILE
+              value: "__PROFILE__"
+            - name: CLUSTER
+              value: "cluster-b"
+            - name: TARGET_URL
+              value: "http://demo-workload.default.svc.cluster.local"
+            - name: K6_PROMETHEUS_RW_SERVER_URL
+              value: "http://prometheus-server.monitoring.svc.cluster.local/api/v1/write"
+            - name: K6_PROMETHEUS_RW_FLUSH_PERIOD
+              value: "15s"
+            - name: K6_PROMETHEUS_RW_TREND_STATS
+              value: "p(95),p(99)"
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits:   { cpu: "500m", memory: "256Mi" }
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+      volumes:
+        - name: script
+          configMap:
+            name: k6-script

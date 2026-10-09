@@ -113,6 +113,10 @@ if (!profiles[PROFILE]) {
 export const options = {
     stages: profiles[PROFILE].stages,
 
+    // New connection per request so kube-proxy balances every request across
+    // pods instead of each VU staying pinned to one pod via keep-alive.
+    noConnectionReuse: (__ENV.NO_CONN_REUSE || 'true') === 'true',
+
     thresholds: {
         http_req_failed: ['rate<0.05'],
         http_req_duration: ['p(95)<1000'],
