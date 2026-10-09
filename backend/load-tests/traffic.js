@@ -47,6 +47,18 @@ const profiles = {
         ],
     },
 
+    surge: {
+        // for live static-vs-ML comparison: quiet lull, sharp surge,
+        // long plateau, drop. ~7m20s total.
+        stages: [
+            { duration: '90s', target: 2 },
+            { duration: '10s', target: 20 },
+            { duration: '4m',  target: 20 },
+            { duration: '10s', target: 2 },
+            { duration: '90s', target: 2 },
+        ],
+    },
+
     // Longer profiles for ML dataset generation — run these unattended
     // for hours, not seconds, so the poller captures real variation.
 

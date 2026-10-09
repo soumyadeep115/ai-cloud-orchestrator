@@ -27,6 +27,7 @@ The core function `decide()` is pure (no DB, no model import).
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Optional, Sequence
@@ -183,6 +184,32 @@ def predictive_target(predicted_rate: float, current_replicas: int) -> int:
 def _clamp(x: int, lo: int, hi: int) -> int:
     return max(lo, min(hi, x))
 
+DECISION_MODE = os.getenv("DECISION_MODE", "ml_safe").strip().lower()   # "ml" or "static"
+STATIC_ONLY = DECISION_MODE == "static"   # static -> never use the model (baseline run)
+ASYMMETRIC_TRUST = DECISION_MODE == "ml_safe"   # model may only ADD capacity, never veto the reactive rule
+IDLE_NULL_ROWS = 2          # this many NEWEST rows without request_rate -> no traffic
+MAX_ROW_AGE_SECONDS = 240   # metric rows older than this are ignored (poller down / old session)
+
+
+def _current_rate(rates):
+    """Newest usable load reading -> (rate_or_None, idle_flag).
+    - newest row has a rate            -> use it
+    - fewer than IDLE_NULL_ROWS newest rows missing -> carry the last real
+      reading (one skipped sample)
+    - IDLE_NULL_ROWS or more newest rows missing    -> no traffic: 0.0
+    """
+    if not rates:
+        return None, False
+    trailing_nulls = 0
+    for x in reversed(rates):
+        if x is not None:
+            break
+        trailing_nulls += 1
+    if trailing_nulls == 0:
+        return rates[-1], False
+    if trailing_nulls >= IDLE_NULL_ROWS:
+        return 0.0, True
+    return next((x for x in reversed(rates) if x is not None), None), False
 
 def decide(
     rows_chronological: Sequence[dict],
@@ -196,8 +223,8 @@ def decide(
     cur = _clamp(state.current_replicas, MIN_REPLICAS, MAX_REPLICAS)
 
     rates = [r.get("request_rate") for r in rows_chronological]
-    current_rate = next((x for x in reversed(rates) if x is not None), None)
-
+    current_rate, idle = _current_rate(rates)
+    
     vol = compute_volatility(rates)
 
     if predicted_rate is not None and not math.isfinite(predicted_rate):
@@ -228,7 +255,11 @@ def decide(
     else:
         blended = math.floor(confidence * m_target + (1 - confidence) * r_target + 0.5)
         source = "model" if confidence >= MODEL_DOMINANT_CONFIDENCE else "blended"
-
+    # ml_safe: the model may only add capacity EARLIER than the reactive rule.
+    # It can never pull the target below what the reactive rule demands.
+    if ASYMMETRIC_TRUST and source != "reactive_fallback" and blended < r_target:
+        blended = r_target
+        source = "reactive_fallback"
     blended = _clamp(blended, MIN_REPLICAS, MAX_REPLICAS)
 
     # Safeguard 1: bound how far one cycle may move the replica count.
@@ -247,6 +278,10 @@ def decide(
     reason = _explain(vol, confidence, source, current_rate, predicted_rate,
                       r_target, m_target, blended, cur, nxt, step_capped,
                       cooldown_blocked)
+    
+    if idle:
+        reason = (f"No traffic: request_rate missing for the last {IDLE_NULL_ROWS}+ "
+                  f"samples, treated as 0 req/s. ") + reason
 
     return ScalingDecision(
         action=action, magnitude=abs(nxt - cur), prev_replicas=cur, next_replicas=nxt,
@@ -290,7 +325,7 @@ def _explain(vol, confidence, source, current_rate, predicted_rate, r_target,
 # and unit-tested without DATABASE_URL or the model file)
 # =====================================================================
 
-def decide_scaling_action(cluster_id: int, commit: bool = False) -> ScalingDecision:
+def decide_scaling_action(cluster_id: int, commit: bool = False, current_replicas: Optional[int] = None) -> ScalingDecision:
     """Fetch recent metrics, ask the predictor, apply the safeguards.
     commit=False -> preview only. commit=True -> also log to `decisions`
     (dry-run: it updates the simulated replica count, it does not touch k8s)."""
@@ -308,6 +343,13 @@ def decide_scaling_action(cluster_id: int, commit: bool = False) -> ScalingDecis
             select(Metric).where(Metric.cluster_id == cluster_id)
             .order_by(Metric.ts.desc()).limit(max(FETCH_ROWS, VOL_WINDOW_STEPS + 1))
         ).all()
+        _now = datetime.now(timezone.utc)
+        rows = [
+            r for r in rows
+            if r.ts is not None
+            and (_now - (r.ts if r.ts.tzinfo else r.ts.replace(tzinfo=timezone.utc))).total_seconds()
+            <= MAX_ROW_AGE_SECONDS
+        ]
         rows_chrono = [
             {
                 "cpu_percent": r.cpu_percent, "memory_percent": r.memory_percent,
@@ -329,9 +371,12 @@ def decide_scaling_action(cluster_id: int, commit: bool = False) -> ScalingDecis
             current_replicas=last.next_pods if last and last.next_pods else INITIAL_REPLICAS,
             last_scale_ts=last_scale.ts if last_scale else None,
         )
+        
+        if current_replicas is not None:  # live mode: k8s is the source of truth
+            state.current_replicas = current_replicas
 
         predicted = None
-        if predict_request_rate is not None:
+        if predict_request_rate is not None and not STATIC_ONLY:
             try:
                 predicted = predict_request_rate(rows_chrono)
             except InsufficientDataError:
