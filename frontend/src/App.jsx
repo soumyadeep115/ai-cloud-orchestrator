@@ -1,111 +1,141 @@
-import { useEffect, useState, useCallback, useRef } from "react";
-import { fetchClusters, fetchClusterMetrics } from "./api";
-import ClusterCard from "./components/ClusterCard";
-import MetricsChart from "./components/MetricsChart";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { fetchClusterMetrics, fetchClusters, fetchDecisions } from "./api";
+import Sidebar, { NAV } from "./components/layout/Sidebar";
+import Topbar from "./components/layout/Topbar";
+import { ErrorBanner } from "./components/ui/Panel";
+import { MAX_REPLICAS, RANGES } from "./config";
+import usePolling from "./hooks/usePolling";
+import { isNum } from "./lib/format";
+import { latest, normalizeMetrics, values, withWorkloadReplicas } from "./lib/metrics";
+import DecisionsView from "./views/DecisionsView";
+import LatencyView from "./views/LatencyView";
+import OverviewView from "./views/OverviewView";
+import PodsView from "./views/PodsView";
+import ResourcesView from "./views/ResourcesView";
+import TrafficView from "./views/TrafficView";
 
-const POLL_MS = 30000;
+const VIEWS = {
+  overview: OverviewView,
+  pods: PodsView,
+  latency: LatencyView,
+  traffic: TrafficView,
+  resources: ResourcesView,
+  decisions: DecisionsView,
+};
+const TITLES = Object.fromEntries(NAV.flatMap((g) => g.items.map((i) => [i.id, i.label])));
+
+const initialView = () => {
+  const h = window.location.hash.replace("#", "");
+  return h in VIEWS ? h : "overview";
+};
 
 export default function App() {
-  const [clusters, setClusters] = useState([]);
+  const [view, setView] = useState(initialView);
   const [selectedId, setSelectedId] = useState(null);
-  const [metricsData, setMetricsData] = useState(null);
-  const [error, setError] = useState(null);
-  const [lastUpdated, setLastUpdated] = useState(null);
+  const [rangeLabel, setRangeLabel] = useState("30m");
+  const [refreshMs, setRefreshMs] = useState(15000);
+  const [menuOpen, setMenuOpen] = useState(false);
 
-  // one AbortController per in-flight request type, so a new poll can
-  // always cancel whatever's still pending from the previous one
-  const clustersAbortRef = useRef(null);
-  const metricsAbortRef = useRef(null);
+  useEffect(() => {
+    window.location.hash = view;
+  }, [view]);
 
-  const loadClusters = useCallback(async () => {
-    clustersAbortRef.current?.abort();
-    const controller = new AbortController();
-    clustersAbortRef.current = controller;
+  const limit = RANGES.find((r) => r.label === rangeLabel)?.limit ?? 120;
 
-    try {
-      const data = await fetchClusters(controller.signal);
-      setClusters(data);
-      setError(null);
-      setLastUpdated(new Date());
-      setSelectedId((prev) => (prev === null && data.length > 0 ? data[0].id : prev));
-    } catch (e) {
-      if (e.name !== "AbortError") setError(e.message);
+  const clustersFetcher = useCallback((s) => fetchClusters(s), []);
+  const clustersQ = usePolling(clustersFetcher, "clusters", refreshMs);
+  const clusters = useMemo(() => clustersQ.data ?? [], [clustersQ.data]);
+
+  // pick the first *healthy* cluster once the list arrives (unreachable ones have no data)
+  useEffect(() => {
+    if (selectedId === null && clusters.length > 0) {
+      setSelectedId((clusters.find((c) => c.status === "healthy") ?? clusters[0]).id);
     }
-  }, []);
+  }, [clusters, selectedId]);
 
-  useEffect(() => {
-    loadClusters();
-    const id = setInterval(loadClusters, POLL_MS);
-    return () => {
-      clearInterval(id);
-      clustersAbortRef.current?.abort();
-    };
-  }, [loadClusters]);
+  const metricsFetcher = useCallback((s) => fetchClusterMetrics(selectedId, limit, s), [selectedId, limit]);
+  const metricsQ = usePolling(metricsFetcher, `${selectedId}-${limit}`, refreshMs, selectedId !== null);
+  const baseRows = useMemo(() => normalizeMetrics(metricsQ.data?.metrics), [metricsQ.data]);
 
-  useEffect(() => {
-    if (selectedId === null) return;
+  const decisionsFetcher = useCallback((s) => fetchDecisions(selectedId, 200, s), [selectedId]);
+  const decisionsQ = usePolling(decisionsFetcher, selectedId, refreshMs, selectedId !== null);
 
-    const load = async () => {
-      metricsAbortRef.current?.abort();
-      const controller = new AbortController();
-      metricsAbortRef.current = controller;
-      try {
-        const data = await fetchClusterMetrics(selectedId, 60, controller.signal);
-        setMetricsData(data);
-      } catch (e) {
-        if (e.name !== "AbortError") setError(e.message);
-      }
-    };
+  // pod_count from the backend counts every pod in the cluster. When it exceeds the
+  // scaler's limit, rebuild the real workload replica count from the decision log.
+  const { rows, podSource } = useMemo(() => {
+    const clusterWide = Math.max(0, ...values(baseRows, "pods")) > MAX_REPLICAS;
+    if (!clusterWide) return { rows: baseRows, podSource: "metrics" };
+    const rebuilt = withWorkloadReplicas(baseRows, decisionsQ.data);
+    return rebuilt ? { rows: rebuilt, podSource: "decisions" } : { rows: baseRows, podSource: "clusterwide" };
+  }, [baseRows, decisionsQ.data]);
 
-    load();
-    const id = setInterval(load, POLL_MS);
-    return () => {
-      clearInterval(id);
-      metricsAbortRef.current?.abort();
-    };
-  }, [selectedId]);
+  const cluster = clusters.find((c) => c.id === selectedId) ?? null;
+  const podsNow = podSource === "clusterwide" ? null : latest(rows, "pods") ?? (isNum(cluster?.pod_count) && cluster.pod_count <= MAX_REPLICAS ? cluster.pod_count : null);
+  const apiOk = !clustersQ.error || clustersQ.data !== null;
+  const View = VIEWS[view];
+
+  const refreshAll = () => {
+    clustersQ.refresh();
+    if (selectedId !== null) {
+      metricsQ.refresh();
+      decisionsQ.refresh();
+    }
+  };
+
+  const ctx = {
+    clusters,
+    selectedId,
+    setSelectedId,
+    cluster,
+    rows,
+    decisions: decisionsQ.data,
+    podsNow,
+    podSource,
+    refreshMs,
+  };
 
   return (
-    <div className="min-h-screen">
-      <header className="border-b border-hairline px-6 py-4 flex items-center justify-between">
-        <div>
-          <h1 className="font-display font-semibold text-lg">Orchestrator.control</h1>
-          <p className="text-[11px] text-text-muted font-mono">live cluster monitoring — Phase 1</p>
-        </div>
-        <div className="text-xs font-mono text-text-muted">
-          {lastUpdated ? `updated ${lastUpdated.toLocaleTimeString()}` : "connecting…"}
-        </div>
-      </header>
+    <div className="min-h-screen flex">
+      <Sidebar
+        view={view}
+        onView={setView}
+        clusters={clusters}
+        selectedId={selectedId}
+        onSelectCluster={setSelectedId}
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        apiOk={apiOk}
+      />
 
-      <main className="px-6 py-6 max-w-5xl mx-auto space-y-6">
-        {error && (
-          <div className="rounded-lg border border-bad/40 bg-bad/10 text-bad text-sm font-mono p-4">
-            Couldn't reach the API at the configured URL ({error}). Check the backend is running and CORS is enabled — see README.
-          </div>
-        )}
+      <div className="flex-1 min-w-0 flex flex-col">
+        <Topbar
+          title={TITLES[view]}
+          clusterName={cluster?.name}
+          range={rangeLabel}
+          onRange={setRangeLabel}
+          refreshMs={refreshMs}
+          onRefreshMs={setRefreshMs}
+          updatedAt={clustersQ.updatedAt}
+          onRefresh={refreshAll}
+          onMenu={() => setMenuOpen(true)}
+        />
 
-        {!error && clusters.length === 0 && (
-          <div className="text-text-muted font-mono text-sm">Loading clusters…</div>
-        )}
+        <main className="px-4 sm:px-6 py-6 w-full max-w-7xl mx-auto space-y-6">
+          {clustersQ.error && clustersQ.data === null && (
+            <ErrorBanner>
+              Couldn't reach the API ({clustersQ.error.message}). Check the backend is running and CORS allows this origin — see README.
+            </ErrorBanner>
+          )}
+          {metricsQ.error && clustersQ.data !== null && (
+            <ErrorBanner>Metrics request failed: {metricsQ.error.message}</ErrorBanner>
+          )}
+          {clustersQ.loading && clusters.length === 0 && !clustersQ.error && (
+            <div className="text-text-muted font-mono text-sm">Loading clusters…</div>
+          )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {clusters.map((c) => (
-            <ClusterCard
-              key={c.id}
-              cluster={c}
-              selected={c.id === selectedId}
-              onClick={() => setSelectedId(c.id)}
-            />
-          ))}
-        </div>
-
-        {selectedId !== null && (
-          <MetricsChart
-            clusterName={metricsData?.cluster_name}
-            metrics={metricsData?.metrics}
-          />
-        )}
-      </main>
+          {(selectedId !== null || view === "overview") && clusters.length > 0 && <View ctx={ctx} />}
+        </main>
+      </div>
     </div>
   );
 }

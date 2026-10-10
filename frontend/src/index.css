@@ -1,15 +1,19 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap');
 @import "tailwindcss";
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap');
 
 @theme {
   --color-void: #0A0E12;
   --color-panel: #10161D;
+  --color-panel-2: #141C25;
   --color-hairline: #1E2A35;
   --color-text-primary: #E7EDF3;
   --color-text-muted: #7C8B9B;
   --color-good: #4ADE80;
   --color-bad: #FB7185;
+  --color-warn: #FFB454;
   --color-accent: #5FD4D0;
+  --color-violet: #A78BFA;
+  --color-info: #60A5FA;
 
   --font-display: 'Space Grotesk', sans-serif;
   --font-mono: 'IBM Plex Mono', monospace;
@@ -23,3 +27,18 @@ body {
   font-family: var(--font-body);
   margin: 0;
 }
+
+* { scrollbar-width: thin; scrollbar-color: #1E2A35 transparent; }
+
+@keyframes pod-pop {
+  0% { transform: scale(0.4); opacity: 0; }
+  60% { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(1); }
+}
+.pod-pop { animation: pod-pop 0.5s ease-out; }
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }

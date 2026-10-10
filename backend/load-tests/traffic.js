@@ -19,6 +19,17 @@ if (!TARGETS[CLUSTER]) {
 const TARGET_URL = __ENV.TARGET_URL || TARGETS[CLUSTER];
 
 const profiles = {
+    heavy: {
+        // reaches ~10 replicas: ~40 req/s plateau
+        stages: [
+            { duration: '90s', target: 2 },
+            { duration: '20s', target: 40 },
+            { duration: '4m',  target: 40 },
+            { duration: '10s', target: 2 },
+            { duration: '90s', target: 2 },
+        ],
+    },
+
     smoke: {
         stages: [
             { duration: '15s', target: 2 },
